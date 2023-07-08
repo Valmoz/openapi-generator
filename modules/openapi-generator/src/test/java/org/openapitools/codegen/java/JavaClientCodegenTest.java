@@ -33,6 +33,7 @@ import io.swagger.v3.oas.models.parameters.RequestBody;
 import io.swagger.v3.oas.models.responses.ApiResponse;
 import io.swagger.v3.parser.core.models.ParseOptions;
 import io.swagger.v3.parser.util.SchemaTypeUtil;
+import lombok.SneakyThrows;
 import org.openapitools.codegen.ClientOptInput;
 import org.openapitools.codegen.CodegenConstants;
 import org.openapitools.codegen.CodegenModel;
@@ -1969,6 +1970,50 @@ public class JavaClientCodegenTest {
     }
 
     @Test
+    public void shouldProperlyExplodeRestTemplateQueryParameters_issue907() {
+
+        final Map<String, File> files = generateFromContract(
+                "src/test/resources/3_0/java/explode-query-parameter.yaml",
+                JavaClientCodegen.RESTTEMPLATE
+        );
+
+        JavaFileAssert.assertThat(files.get("DefaultApi.java"))
+                .printFileContent()
+                .assertMethod("searchWithHttpInfo")
+                .bodyContainsLines("localVarQueryParams.putAll(apiClient.parameterToMultiValueMap(null, \"regular-param\", regularParam));")
+                .bodyContainsLines("localVarQueryParams.putAll(apiClient.parameterToMultiValueMap(null, \"someString\", objectParam.getSomeString()));")
+                .bodyContainsLines("localVarQueryParams.putAll(apiClient.parameterToMultiValueMap(null, \"someBoolean\", objectParam.getSomeBoolean()));")
+                .bodyContainsLines("localVarQueryParams.putAll(apiClient.parameterToMultiValueMap(null, \"someInteger\", objectParam.getSomeInteger()));")
+        ;
+    }
+
+    private static Map<String, File> generateFromContract(final String pathToSpecification, final String library) {
+        return generateFromContract(pathToSpecification, library, new HashMap<>());
+    }
+
+    @SneakyThrows
+    private static Map<String, File> generateFromContract(
+            final String pathToSpecification,
+            final String library,
+            final Map<String, Object> properties
+    ) {
+        final File output = Files.createTempDirectory("test").toFile().getCanonicalFile();
+        output.deleteOnExit();
+
+        final CodegenConfigurator configurator = new CodegenConfigurator()
+                .setGeneratorName("java")
+                .setLibrary(library)
+                .setAdditionalProperties(properties)
+                .setInputSpec(pathToSpecification)
+                .setOutputDir(output.getAbsolutePath());
+
+        final ClientOptInput clientOptInput = configurator.toClientOptInput();
+        final DefaultGenerator generator = new DefaultGenerator();
+        return generator.opts(clientOptInput).generate().stream()
+                .collect(Collectors.toMap(File::getName, Function.identity()));
+    }
+
+    @Test
     public void testForJavaApacheHttpClientJsonSubtype() throws IOException {
         File output = Files.createTempDirectory("test").toFile().getCanonicalFile();
         output.deleteOnExit();
@@ -2207,4 +2252,27 @@ public class JavaClientCodegenTest {
         TestUtils.assertFileContains(petApi, "@Component");
     }
 
+    @Test
+    public void testLogicToAvoidStackOverflow() throws IOException {
+        Map<String, Object> properties = new HashMap<>();
+        properties.put(CodegenConstants.API_PACKAGE, "xyz.abcdef.api");
+        properties.put(JavaClientCodegen.GENERATE_CLIENT_AS_BEAN, true);
+
+        File output = Files.createTempDirectory("test").toFile();
+        output.deleteOnExit();
+
+        final CodegenConfigurator configurator = new CodegenConfigurator()
+                .setGeneratorName("java")
+                .setLibrary(JavaClientCodegen.RESTTEMPLATE)
+                .setAdditionalProperties(properties)
+                .setInputSpec("src/test/resources/3_0/issue_12929.yaml")
+                .setOutputDir(output.getAbsolutePath().replace("\\", "/"));
+
+
+        DefaultGenerator generator = new DefaultGenerator();
+        List<File> files = generator.opts(configurator.toClientOptInput()).generate();
+        files.forEach(File::deleteOnExit);
+
+        // shouldn't throw stackoverflow exception
+    }
 }
